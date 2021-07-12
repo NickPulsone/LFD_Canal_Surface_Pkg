@@ -613,7 +613,7 @@ def main():
     directrix, t, n, b = slice_data(demonstration_data, directrix, t, n, b, time_step_ct, tolerance, window_size)
 
     # Generate the canal surface
-    radii = get_canal_surface(directrix, demonstration_data, t)
+    radii = get_canal_surface(directrix, demonstration_data, t, tolerance)
 
     # Generate a random starting point for reproduction
     p0 = get_p0(0, directrix, radii, n, b)
