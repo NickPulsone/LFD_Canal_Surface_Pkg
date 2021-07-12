@@ -10,6 +10,8 @@ The following program will generate a canal surface (a set of points on a direct
 and a set of radii at each point) based on demonstration data. It will then use the generated
 canal surface with an initial starting position to reproduce a trajectory according to the input.
 
+IMPORTANT: 2 Parameters must be tuned for the program to yield accurate results: window_ratio and tolerance (see main)
+
 NOTE: All 3D Curves assumed to be in the form [array_of_xs, array_of_ys, array_of_zs], where
 array[:, 4] refers to the cartesian coordinate of the fourth point on the demonstration.
 """
@@ -17,6 +19,7 @@ array[:, 4] refers to the cartesian coordinate of the fourth point on the demons
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 import math
 from scipy import interpolate
 
@@ -120,7 +123,7 @@ def smooth_a_trajectory(raw_data, num_generated_points):
     trim_y = [raw_data[1][0]]
     trim_z = [raw_data[2][0]]
     # Walk through the list of points and ignore adjacent points that are practically identical
-    for i in range(num_generated_points - 1):
+    for i in range(len(raw_data[0]) - 1):
         if not (np.absolute(raw_data[0][i] - raw_data[0][i + 1]) < 0.0001 and np.absolute(
                 raw_data[1][i] - raw_data[1][i + 1]) < 0.0001 and np.absolute(
                 raw_data[2][i] - raw_data[2][i + 1]) < 0.0001):
@@ -332,7 +335,7 @@ def slice_data(demonstration_data, directrix, t, n, b, num_points, tolerance, wi
             end_i + 1)]
 
 
-def get_canal_surface(dirx, data, et):
+def get_canal_surface(dirx, data, et, tolerance):
     """Generates a canal surface (list of radii with as many points as the directrix)
        Data = array of 3D curves
        dirx = 3D mean curve
@@ -359,28 +362,30 @@ def get_canal_surface(dirx, data, et):
         possible_radii = np.empty(len(data))
         for j in range(len(data)):
             # Find closes point on the demonstration to the plane of interest
-            windowed_points = data[j, :, :]
-            windowed_comparisons = np.absolute(
-                et[0][i] * windowed_points[0] + et[1][i] * windowed_points[1] + et[2][i] * windowed_points[2] + d)
-            best_pt_index = np.where(windowed_comparisons == min(windowed_comparisons))
+            points = data[j, :, :]
+            point_comparisons = np.absolute(
+                et[0][i] * points[0] + et[1][i] * points[1] + et[2][i] * points[2] + d)
+            best_pt_index = np.where(point_comparisons == min(point_comparisons))
             best_pt_index = best_pt_index[0][0]
 
             # Calculate distance between point of interest and directrix point, store for later comparison
-            possible_radii[j] = get_distance(windowed_points[:, best_pt_index], pt)
+            possible_radii[j] = get_distance(points[:, best_pt_index], pt)
             if i != 0:
                 # If there is a massive jump between radii, we know that the radius is inaccurate
                 # (happens when plane intersects multiple points on a demonstration)
+                check_values = np.zeros(len(point_comparisons), dtype=int)
                 while possible_radii[j] >= prev_radii[j] * 1.1 or possible_radii[j] <= prev_radii[j] * 0.9:
-                    # Delete innaccurate point, find a new one
-                    windowed_comparisons = np.delete(windowed_comparisons, best_pt_index)
-                    best_pt_index = np.where(windowed_comparisons == min(windowed_comparisons))
-                    best_pt_index = best_pt_index[0][0]
-                    possible_radii[j] = get_distance(windowed_points[:, best_pt_index], pt)
-                    # If no point is found that accurately intersects with the plane,
-                    # maintain the radius from the previous directrix point
-                    if len(windowed_comparisons == 2):
-                        possible_radii[j] = prev_radii[j]
+                    # If it cant find a point within a tolerance, just maintain the radius from the previous point
+                    # (In progress/To be modified)
+                    if point_comparisons[best_pt_index] > tolerance:
+                        possible_radii[j] = prev_radii[j - 1]
                         break
+                    # Delete innaccurate point, find the next closest point to the plane
+                    point_comparisons = np.delete(point_comparisons, best_pt_index)
+                    best_pt_index = np.where(point_comparisons == min(point_comparisons))
+                    best_pt_index = best_pt_index[0][0]
+                    possible_radii[j] = get_distance(points[:, best_pt_index], pt)
+            # Keep track of the radius before the current point
             prev_radii[j] = possible_radii[j]
 
         # Find maximum of relevant points
@@ -579,12 +584,12 @@ def main():
     num_circles = 20
 
     # How much of the curve is covered from either end until it intersects a plane multiple times
-    window_ratio = 0.1
+    window_ratio = 0.1 # <----- ~~~~~~ MUST BE TUNED ACCORDING TO DATA ~~~~~
     window_size = int(time_step_ct * window_ratio)
 
-    # IMPORTANT: Set this tolerance to scale with the size of the data (for how close
+    # Set this tolerance to scale with the size of the data (for how close
     # points have to be to be considered close enough the the plane defined by tangents)
-    tolerance = 0.005
+    tolerance = 0.005 # <----- ~~~~~~ MUST BE TUNED ACCORDING TO DATA ~~~~~~
 
     # Create synthetic demonstration data 
     raw_data = get_demonstration_data(num_demonstrations, 200)
