@@ -16,12 +16,14 @@ NOTE: All 3D Curves assumed to be in the form [array_of_xs, array_of_ys, array_o
 array[:, 4] refers to the cartesian coordinate of the fourth point on the demonstration.
 """
 
+import os
 import copy
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import math
 from scipy import interpolate
+from scipy.io import loadmat
 
 def normalization(vector):
     """Normalizes a 3D vector"""
@@ -509,7 +511,7 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
     do_plot_reproduction = True
     do_plot_TNB = False
     do_plot_point_markers = False
-    do_plot_radii_v_time = False
+    do_plot_radii_v_time = True
 
     # Set up 3D plot
     ax = plt.axes(projection='3d')
@@ -540,12 +542,6 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
                 z[j] = dirx[2][i] + ri[i] * (en[2][i] * np.cos(theta[j]) + eb[2][i] * np.sin(theta[j]))
                 ax.plot3D(x, y, z, 'gray')
 
-    # Plot radius as a function of time
-    if do_plot_circles and do_plot_radii_v_time:
-        ax2d = plt.axes()
-        plt.title('Radii over time', size=16)
-        ax2d.plot(range(len(et[0])), ri)
-
     # Plot starting point and reproduced trajectory
     if do_plot_reproduction:
         # Plot initial point
@@ -571,11 +567,21 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
         for i in range(0, len(eb[0]), 5):
             ax.quiver(dirx[0][i], dirx[1][i], dirx[2][i], eb[0][i], eb[1][i], eb[2][i], color=['b'])
 
+    # Plot radius as a function of time
+    if do_plot_circles and do_plot_radii_v_time:
+        ax2d2 = plt.figure(2)
+        ax2d = plt.axes()
+        plt.title('Radii over time', size=16)
+        ax2d.plot(range(len(et[0])), ri)
+        plt.show()
+
     plt.show()
 
 
 def main():
     """Driver for testing algorithm with precreated demonstration data"""
+    # Choose where to get demonstration data
+    do_get_file_data = True
     # Set the number of data points (time steps), the number of demonstrations,
     # and a ballpark for the desired number of circles of the canal surface to be
     # visible (wont be exact due to data inconsistencies)
@@ -592,7 +598,13 @@ def main():
     tolerance = 0.005 # <----- ~~~~~~ MUST BE TUNED ACCORDING TO DATA ~~~~~~
 
     # Create synthetic demonstration data 
-    raw_data = get_demonstration_data(num_demonstrations, 200)
+    if do_get_file_data:
+        raw_data = []
+        for i in range(1, 11):
+            mat = loadmat(os.getcwd() + "/Reaching/reach_" + str(i) + ".mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+    else:
+        raw_data = get_demonstration_data(num_demonstrations, 200)
 
     # Resample data to get new demonstration data
     demonstration_data = sample_raw_data(raw_data, time_step_ct)
@@ -613,7 +625,7 @@ def main():
     directrix, t, n, b = slice_data(demonstration_data, directrix, t, n, b, time_step_ct, tolerance, window_size)
 
     # Generate the canal surface
-    radii = get_canal_surface(directrix, demonstration_data, t)
+    radii = get_canal_surface(directrix, demonstration_data, t, tolerance)
 
     # Generate a random starting point for reproduction
     p0 = get_p0(0, directrix, radii, n, b)
