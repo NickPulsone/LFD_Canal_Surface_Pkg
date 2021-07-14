@@ -10,28 +10,31 @@
 
 import sys
 import copy
+# import keyboard
 import rospy
 import moveit_commander
 import moveit_msgs.msg
 import geometry_msgs.msg
-from math import pi
-from std_msgs.msg import String
-from moveit_commander.conversions import pose_to_list
-import roslib
+from math import pi, ceil
+from std_msgs.msg import String, Float64MultiArray, MultiArrayDimension
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from mpl_toolkits.mplot3d import Axes3D
-from canal_surface_algorithm import smooth_a_trajectory, reframe_curves, inverse_reframe_curves, get_mean_old
-from scipy.io import savemat, loadmat
+from canal_surface_algorithm import smooth_a_demonstration, reframe_curves, inverse_reframe_curves, get_mean_old
+from lfd_canal_surface_pkg.srv import CanalSrv, CanalSrvRequest
+
+
+"""TUNABLE PARAMTERS"""
+tolerance = 0.005
+window_ratio = 0.1
+
 
 def get_y_n(prompt):
     """Gets a yes or no response from the user"""
     answer = raw_input(prompt)
     while len(answer) == 0 or answer[0] not in ["Y", "y", "N", "n"]:
-        print("Please enter a valid (Y/N) response.\n")
-        print("Would you like to save this trajectory (Y/N)?")
-        answer = raw_input()
+        answer = raw_input("\nPlease enter a valid (Y/N) response: ")
     if answer[0] == "Y" or answer[0] == "y":
         return True
     else:
@@ -43,10 +46,6 @@ def pose_to_xyz(poses):
     x = []
     y = []
     z = []
-    orx = []
-    ory = []
-    orz = []
-    orw = []
     for pose in poses:
         x.append(pose.position.x)
         y.append(pose.position.y)
@@ -73,7 +72,7 @@ class MoveGroupPythonInterface(object):
         #the moveit_commander is what is responsible for sending info the moveit controllers
         moveit_commander.roscpp_initialize(sys.argv)
         #initialize node
-        rospy.init_node('nick_demo_rec', anonymous=True)
+        rospy.init_node('data_collect', anonymous=True)
         #Instantiate a `RobotCommander`_ object. Provides information such as the robot's kinematic model and the robot's current joint states
         robot = moveit_commander.RobotCommander()
         #Instantiate a `PlanningSceneInterface`_ object. This provides a remote interface for getting, setting, and updating the robot's internal understanding of the surrounding world:
@@ -114,6 +113,12 @@ class MoveGroupPythonInterface(object):
         self.smooth_demonstrations = []
         # The mean/spine curve of the demonstration data, same exact structure as a given smooth demonstration
         self.directrix = []
+        # The TNB frames of the directrix
+        self.T = []
+        self.N = []
+        self.B = []
+        # The radii of the canal surface
+        self.radii = []
         # Keep track of the origin given a set of demonstrations (starts @ (0,0,0))
         self.origin = np.array([0.0, 0.0, 0.0])
         # Colors used for plotting demonstrations
@@ -128,8 +133,7 @@ class MoveGroupPythonInterface(object):
         """Records a demonstration from the simulated robot based on movegroup data
            Returns T/F based on whether the demonstration is one to keep"""
         # Set rate of collecting poses
-        poses_per_second = 500
-        rt = rospy.Rate(poses_per_second)
+        rt = rospy.Rate(200)
         
         # Give user the option to have the robot move back to where it is now for speed
         return_to_start = get_y_n("Would you like to have the robot return to the current position after the recording (if so move it there now, Y/N)?: ")
@@ -145,19 +149,22 @@ class MoveGroupPythonInterface(object):
 
         # Give user a countdown
         print("\nGet ready to start moving the robot...\n")
-        for num in [3, 2, 1]:
+        for num in [5, 4, 3, 2, 1]:
             print(str(num) + "...\n")
             rospy.sleep(1)
 
         # Define starting pose
         start_pose = self.move_group.get_current_pose(self.eef_link).pose
 
-        # Record demonstration for the next 3 seconds
+        # Record demonstration for the next 5 seconds
         wp = [start_pose]
-        print("Start moving the robot!!!!!")
+        print("Start moving the robot!!!!!\n")
         now = rospy.get_time()
-        while rospy.get_time() <= (now + 3.0):
+        while rospy.get_time() <= (now + 5.0):
             wp.append(copy.deepcopy(self.move_group.get_current_pose(self.eef_link).pose))
+            # Requires root user priveleges to use (do not have on current linux installation)
+            # if keyboard.is_pressed("enter"):
+            #     break
             rt.sleep()
 
         # Test the length
@@ -169,8 +176,8 @@ class MoveGroupPythonInterface(object):
         self.raw_demonstrations.append(cartesian_points)
         self.plot_curve_single(-1, raw=True)
 
-        # Save trajectory if the user is satisfied, close plot
-        save_dem = get_y_n("Would you like to save this trajectory (Y/N)?")
+        # Save demonstration if the user is satisfied, close plot
+        save_dem = get_y_n("Would you like to save this demonstration (Y/N)?")
         plt.close()
 
         # Determine if the demonstration needs to be rerecorded. If not, add to data.
@@ -220,7 +227,7 @@ class MoveGroupPythonInterface(object):
         """Smooths and resamples the last recorded demonstration"""
         # Smooth the curve, resample based on given number of points
         num_pts_to_sample = 1000
-        smooth_cartesian_points = smooth_a_trajectory(self.raw_demonstrations[-1], num_pts_to_sample)
+        smooth_cartesian_points = smooth_a_demonstration(self.raw_demonstrations[-1], num_pts_to_sample)
         return smooth_cartesian_points
 
     def plot_curves(self):
@@ -255,19 +262,66 @@ class MoveGroupPythonInterface(object):
         line_color = self.plot_line_colors[index % len(self.plot_line_colors)]
         if raw:
             ax.plot3D(self.raw_demonstrations[index][0], self.raw_demonstrations[index][1], self.raw_demonstrations[index][2], line_color)
+            # Plot a star on the graph to represent the robot base frame
+            ax.plot3D([0.0], [0.0], [0.0], marker = "*", markersize = 20)
         else:
             ax.plot3D(self.smooth_demonstrations[index][0], self.smooth_demonstrations[index][1], self.smooth_demonstrations[index][2], line_color)
+            # Plot a star on the graph to represent the robot base frame
+            ax.plot3D([-self.origin[0]], [-self.origin[1]], [-self.origin[2]], marker = "*", markersize = 20)
+            # Sey x, y, and z limits according to previously plotted demonstrations
             plt.xlim(self.plot_curve_ranges[0][0], self.plot_curve_ranges[0][1])
             plt.ylim(self.plot_curve_ranges[1][0], self.plot_curve_ranges[1][1])
             ax.set_zlim(self.plot_curve_ranges[2][0], self.plot_curve_ranges[2][1])
+        # If referencing the last demonstration, don't label according to index
         if index == -1:
             patch = mpatches.Patch(color=line_color, label="Recorded Demonstration")
         else:
             patch = mpatches.Patch(color=line_color, label="Recorded Demonstration #" + str(index + 1))
+        # Create legend
         plt.legend(handles=[patch])
-        # Plot a star on the graph to represent the robot base frame
-        ax.plot3D([-self.origin[0]], [-self.origin[1]], [-self.origin[2]], marker = "*", markersize = 20)
             
+        plt.show()
+
+    def plot_canal_surface(self):
+        """ Plots a canal surface given current parameters, to be run after canal_surface_request """
+        # Close any opened windows
+        if plt.get_fignums():
+            plt.close()
+        # Plot curves according to self.plot_line_colors and the order they were recorded 
+        patches = []
+        ax = plt.axes(projection='3d')
+        plt.ion()
+        # Plot demonstrations
+        line_color = "blue"
+        for i in range(len(self.smooth_demonstrations)):
+            ax.plot3D(self.smooth_demonstrations[i][0], self.smooth_demonstrations[i][1], self.smooth_demonstrations[i][2], line_color)
+        patches.append(mpatches.Patch(color=line_color, label="Demonstrations"))
+        # Plot directrix
+        line_color = "red"
+        ax.plot3D(self.directrix[0], self.directrix[1], self.directrix[2], line_color)
+        patches.append(mpatches.Patch(color=line_color, label="Directrix"))
+        # Plot circles
+        line_color = "gray"
+        num_circ = 20
+        theta_density = 20
+        theta = np.linspace(0, 2 * pi, theta_density)
+        for i in range(0, len(self.radii), int(ceil(len(self.radii) / num_circ))):
+            # Init array containers for x, y, and z of circles
+            circ_x = np.empty(theta_density)
+            circ_y = np.empty(theta_density)
+            circ_z = np.empty(theta_density)
+            # Use calculated radii and the Normal and Binormal vectors to plot the circles
+            for j in range(theta_density):
+                circ_x[j] = self.directrix[0][i] + self.radii[i] * (self.N[0][i] * np.cos(theta[j]) + self.B[0][i] * np.sin(theta[j]))
+                circ_y[j] = self.directrix[1][i] + self.radii[i] * (self.N[1][i] * np.cos(theta[j]) + self.B[1][i] * np.sin(theta[j]))
+                circ_z[j] = self.directrix[2][i] + self.radii[i] * (self.N[2][i] * np.cos(theta[j]) + self.B[2][i] * np.sin(theta[j]))
+                ax.plot3D(circ_x, circ_y, circ_z, line_color)
+        patches.append(mpatches.Patch(color=line_color, label="Canal Surface Cross Sections"))
+        plt.legend(handles=patches)
+        # Plot a star on the graph to represent the robot base frame
+        ax.plot3D([-self.origin[0]], [-self.origin[1]], [-self.origin[2]], "black", marker = "*", markersize = 20)
+        # Update the plot curve ranges
+        self.plot_curve_ranges = [plt.xlim(), plt.ylim(), ax.get_zlim()]
         plt.show()
 
     def add_demonstration(self, demo):
@@ -320,7 +374,7 @@ class MoveGroupPythonInterface(object):
             # Plot
             self.plot_curves()
             # Ask the user what action they would like to take
-            prompt = ("Press 'D' to delete a demonstration.\nPress 'A' to add/record another demonstration\nPress 'C' to proceed to the canal surface\n\nEnter your response here: ")
+            prompt = ("\nPress 'D' to delete a demonstration.\nPress 'A' to add/record another demonstration\nPress 'C' to proceed to the canal surface\n\nEnter your response here: ")
             action = raw_input(prompt)
             while (len(action) == 0) or (not action[0].isalpha()) or (action[0].upper() not in ["D", "A", "C"]):
                 action = raw_input(prompt)
@@ -330,6 +384,47 @@ class MoveGroupPythonInterface(object):
             # User wants to add a demonstration
             if action[0].upper() == "A":
                 self.record_a_demonstration()
+
+    def request_canal_surface(self):
+        # Establish connection to canal surface server
+        rospy.wait_for_service('/canal_surface')
+        connect_to_algorithm = rospy.ServiceProxy('/canal_surface', CanalSrv)
+        # Initialize a request variable for canal surface server
+        canal_request = CanalSrvRequest()
+        # Init directrix (must flatten to publish)
+        canal_request.directrix = Float64MultiArray()
+        canal_request.directrix.data = np.frombuffer(self.directrix.tobytes(),'float64')
+        canal_request.directrix.layout.dim = [MultiArrayDimension()]
+        canal_request.directrix.layout.dim[0].stride = len(self.directrix[0])
+        # Init demonstrations (must flatten to publish)
+        dem_multi_arrays = []
+        for demonstration in self.smooth_demonstrations:
+            dem_multi_array = Float64MultiArray()
+            dem_multi_array.data = np.frombuffer(demonstration.tobytes(), 'float64')
+            dem_multi_array.layout.dim = [MultiArrayDimension()]
+            dem_multi_array.layout.dim[0].stride = len(demonstration[0])
+            dem_multi_arrays.append(dem_multi_array)
+        canal_request.demonstrations = dem_multi_arrays
+        # Define tolerance and window size according to global parameters
+        canal_request.tolerance = tolerance
+        canal_request.window_ratio = window_ratio
+        # Call service, recieve response, unpack variables
+        canal_response = connect_to_algorithm(canal_request)
+        sliced_length = canal_response.sliced_directrix.layout.dim[0].stride
+        self.directrix = np.array([canal_response.sliced_directrix.data[0:sliced_length], 
+                                   canal_response.sliced_directrix.data[sliced_length:2*sliced_length], 
+                                   canal_response.sliced_directrix.data[2*sliced_length:]])
+        self.T = np.array([canal_response.tangent.data[0:sliced_length], 
+                                   canal_response.tangent.data[sliced_length:2*sliced_length], 
+                                   canal_response.tangent.data[2*sliced_length:]])
+        self.N = np.array([canal_response.normal.data[0:sliced_length], 
+                                   canal_response.normal.data[sliced_length:2*sliced_length], 
+                                   canal_response.normal.data[2*sliced_length:]])
+        self.B = np.array([canal_response.binormal.data[0:sliced_length], 
+                                   canal_response.binormal.data[sliced_length:2*sliced_length], 
+                                   canal_response.binormal.data[2*sliced_length:]])
+        self.radii = canal_response.radii
+
 
 def main():
     try:
@@ -347,21 +442,26 @@ def main():
 
         # Loop through for each demonstration, providing an interface for users to record, save, and delete
         for i in range(number_of_demonstrations):
-            print("\nInitiating the recording for trajectory #" + str(i+1) + "...\n")
+            print("\nInitiating the recording for demonstration #" + str(i+1) + "...\n")
             rospy.sleep(3)
             recorded = False
             while (not recorded):
                 recorded = ur5e_arm.record_a_demonstration()
                 if recorded == False:
-                    print("Restarting the recording for trajectory #" + str(i+1) + "...\n")
+                    print("\nRestarting the recording for demonstration #" + str(i+1) + "...\n")
                     rospy.sleep(3)
-        print("Press 'Enter' to display recorded trajectories")
-        raw_input()
+        raw_input("\nPress 'Enter' to display recorded demonstrations")
         ur5e_arm.prompt_insertion_and_deletion()
 
-        """TODO: Call service fro canal surface generation, trajectory reproduction"""
+        """TODO: Call service for canal surface generation"""
+        """
+        ur5e_arm.request_canal_surface()
+        ur5e_arm.plot_canal_surface()
+        """
 
-        """TODO: Publish response from service to robot and initiate motion"""
+        """TODO: Call service for trajectory reproduction"""
+
+        """TODO: Publish response from services to robot and initiate motion"""
 
         print("\nPress 'Enter' to exit'")
         raw_input()
