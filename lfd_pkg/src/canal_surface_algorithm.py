@@ -16,14 +16,15 @@ NOTE: All 3D Curves assumed to be in the form [array_of_xs, array_of_ys, array_o
 array[:, 4] refers to the cartesian coordinate of the fourth point on the demonstration.
 """
 
-import os
 import copy
 import numpy as np
-import math
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import math
 from scipy import interpolate
-from scipy.io import loadmat
+from scipy.io import loadmat, savemat
+from scipy.signal import argrelextrema
+
 
 def normalization(vector):
     """Normalizes a 3D vector"""
@@ -32,16 +33,16 @@ def normalization(vector):
     return vector / np.linalg.norm(vector)
 
 
-def get_demonstration_data(num_dem, time_st_ct):
+def get_synthetic_demonstration_data(num_dem, num_points_to_sample):
     """Creates a set of synthetic trajectories used to generate the Canal Surface"""
     trajectories = []
-    type_of_data = "Arctan Data"
+    type_of_data = "Hourglass Data"
     for i in range(num_dem):
         if type_of_data == "Wavy Data":
-            z = np.linspace(0, 1, time_st_ct)
-            y = np.array([np.sin(1.5 * z[i]) for i in range(time_st_ct)])
+            z = np.linspace(0, 1, num_points_to_sample)
+            y = np.array([np.sin(1.5 * z[i]) for i in range(num_points_to_sample)])
             y = np.add(y, 0.5 * np.random.rand())
-            x = np.array([np.cos(1.5 * z[i]) for i in range(time_st_ct)])
+            x = np.array([np.cos(1.5 * z[i]) for i in range(num_points_to_sample)])
             x = np.add(x, 0.5 * np.random.rand())
         elif type_of_data == "Hourglass Data":
             # Generate multipliers so that we get our hourglass shape
@@ -55,66 +56,38 @@ def get_demonstration_data(num_dem, time_st_ct):
             vector = np.array([0.5 * x_multiplier, 0.5 * y_multiplier])
             vector = normalization(vector)
             # Define a reference x and y to form parabolic shape
-            ref_x = np.linspace(-1, 1, time_st_ct)
+            ref_x = np.linspace(-1, 1, num_points_to_sample)
             ref_y = -0.5 * np.square(ref_x)
             # Get x, y, and z based on reference x and y and the vector
-            x = np.linspace(-1, 1, time_st_ct)
-            y = np.array([vector[0] * ref_y[i] for i in range(time_st_ct)])
-            z = np.array([vector[1] * ref_y[i] for i in range(time_st_ct)])
+            x = np.linspace(-1, 1, num_points_to_sample)
+            y = np.array([vector[0] * ref_y[i] + 0.01 * np.random.randn() for i in range(num_points_to_sample)])
+            z = np.array([vector[1] * ref_y[i] + 0.01 * np.random.randn() for i in range(num_points_to_sample)])
         elif type_of_data == "Noisy Sinewave Data":
             # Generate vector, normalize it
             vector = np.array([0.3 * np.random.rand(), 0.3 * np.random.rand()])
             vector = normalization(vector)
             # Define a reference x and y to form parabolic shape
-            ref_x = np.linspace(0.0, 2 * np.pi, time_st_ct)
+            ref_x = np.linspace(0.0, 2 * np.pi, num_points_to_sample)
             ref_y = np.sin(ref_x)
             # Get x, y, and z based on reference x and y and the vector
-            x = np.linspace(-1, 1, time_st_ct)
-            y = np.array([vector[0] * ref_y[i] + 0.01 * np.random.randn() for i in range(time_st_ct)])
-            z = np.array([vector[1] * ref_y[i] + 0.01 * np.random.randn() for i in range(time_st_ct)])
+            x = np.linspace(-1, 1, num_points_to_sample)
+            y = np.array([vector[0] * ref_y[i] + 0.01 * np.random.randn() for i in range(num_points_to_sample)])
+            z = np.array([vector[1] * ref_y[i] + 0.01 * np.random.randn() for i in range(num_points_to_sample)])
         else:
             """Noisy Arctan data"""
             # Generate vector, normalize it
             vector = np.array([np.random.rand(), np.random.rand()])
             vector = normalization(vector)
             # Define a reference x and y to form parabolic shape
-            ref_x = np.linspace(0.0, 2 * np.pi, time_st_ct)
+            ref_x = np.linspace(0.0, 2 * np.pi, num_points_to_sample)
             ref_y = np.arctan(2 * ref_x)
             # Get x, y, and z based on reference x and y and the vector
-            x = np.linspace(-1, 1, time_st_ct)
-            y = np.array([vector[0] * ref_y[i] + 0.05 * np.random.randn() for i in range(time_st_ct)])
-            z = np.array([vector[1] * ref_y[i] + 0.05 * np.random.randn() for i in range(time_st_ct)])
+            x = np.linspace(-1, 1, num_points_to_sample)
+            y = np.array([vector[0] * ref_y[i] + 0.05 * np.random.randn() for i in range(num_points_to_sample)])
+            z = np.array([vector[1] * ref_y[i] + 0.05 * np.random.randn() for i in range(num_points_to_sample)])
 
         trajectories.append([x, y, z])
     return np.array(trajectories)
-
-
-def sample_raw_data(raw_data, num_generated_points):
-    """Takes an array with raw demonstrations, uses spline interpolation to smooth and resample data
-       with a number of points specified by num_generated points. Used mostly for synthetic data, or
-       data loaded from a file."""
-    generated_data = []
-    # For each trajectory, interpolate the data and resample based on number of desired points
-    num_trajectories = len(raw_data)
-    for i in range(num_trajectories):
-        # Define a time range based on the number of captured points
-        num_captured_points = len(raw_data[i][0])
-        time_range = np.array(range(num_captured_points))
-        t_function = np.linspace(0.0, num_captured_points - 1, num_generated_points)
-
-        # Gerneate 1D interpolation functions for the x, y, and z of each trajectory
-        x_est_func = interpolate.UnivariateSpline(time_range, raw_data[i][0])
-        y_est_func = interpolate.UnivariateSpline(time_range, raw_data[i][1])
-        z_est_func = interpolate.UnivariateSpline(time_range, raw_data[i][2])
-        # generated_functions.append(np.array([x_est_func, y_est_func, z_est_func]))
-
-        # Sample from the interpolated functions
-        x = np.array([x_est_func(t) for t in t_function])
-        y = np.array([y_est_func(t) for t in t_function])
-        z = np.array([z_est_func(t) for t in t_function])
-        generated_data.append(np.array([x, y, z]))
-
-    return np.array(generated_data)
 
 
 def smooth_a_trajectory(raw_data, num_generated_points):
@@ -125,7 +98,7 @@ def smooth_a_trajectory(raw_data, num_generated_points):
     trim_y = [raw_data[1][0]]
     trim_z = [raw_data[2][0]]
     # Walk through the list of points and ignore adjacent points that are practically identical
-    for i in range(len(raw_data[0]) - 1):
+    for i in range(num_generated_points - 1):
         if not (np.absolute(raw_data[0][i] - raw_data[0][i + 1]) < 0.0001 and np.absolute(
                 raw_data[1][i] - raw_data[1][i + 1]) < 0.0001 and np.absolute(
                 raw_data[2][i] - raw_data[2][i + 1]) < 0.0001):
@@ -141,9 +114,9 @@ def smooth_a_trajectory(raw_data, num_generated_points):
     # Gerneate 1D interpolation functions for the x, y, and z of each trajectory
     # Could use interp1d, UnivariateSpline, or other methods for smooth interpolation
     """
-    x_est_func = interpolate.UnivariateSpline(time_range, trim_x, s=10)
-    y_est_func = interpolate.UnivariateSpline(time_range, trim_y, s=10)
-    z_est_func = interpolate.UnivariateSpline(time_range, trim_z, s=10)
+    x_est_func = interpolate.UnivariateSpline(time_range, trim_x)
+    y_est_func = interpolate.UnivariateSpline(time_range, trim_y)
+    z_est_func = interpolate.UnivariateSpline(time_range, trim_z)
     """
     x_est_func = interpolate.interp1d(time_range, trim_x)
     y_est_func = interpolate.interp1d(time_range, trim_y)
@@ -160,6 +133,7 @@ def smooth_a_trajectory(raw_data, num_generated_points):
     return smoothed_points
 
 
+# TODO: New Linux installation to get rid of this
 def get_mean_old(data):
     """(Python 2) Calculates the directrix curve given a set of trajectories"""
     """NOTE: Assumes data in the form of demonstrations with the same 
@@ -196,24 +170,58 @@ def get_mean(data):
     return np.array([x_mean, y_mean, z_mean])
 
 
-def reframe_curves(curves, pt):
+# TODO: Modify function accoringly upon completeing the loop
+def reframe_curves(raw_data, data, best_demo_index=0, reaching=True):
     """Make the given point the new origin, with respect to the given data.
        Data given in the form of an array of 3D curves."""
-    for i in range(len(curves)):
-        curves[i][0] -= pt[0]
-        curves[i][1] -= pt[1]
-        curves[i][2] -= pt[2]
-    return curves
+    # Define new origin based on best demonstration
+    new_origin = copy.deepcopy(raw_data[best_demo_index][:, -1])
+    if reaching:
+        # Reframe demonstrations to make the best target point the origin
+        for i in range(len(raw_data)):
+            # Slightly shift raw demonstrations to meet at target point
+            distance_to_shift_raw = np.array([new_origin[0] - raw_data[i][0, -1], new_origin[1] - raw_data[i][1, -1],
+                                              new_origin[2] - raw_data[i][2, -1]])
+            if i != best_demo_index:
+                raw_data[i][0] += distance_to_shift_raw[0]
+                raw_data[i][1] += distance_to_shift_raw[1]
+                raw_data[i][2] += distance_to_shift_raw[2]
+            # Slightly shift smooth demonstrations to meet at target point
+            distance_to_shift_smooth = np.array([new_origin[0] - data[i][0, -1], new_origin[1] - data[i][1, -1],
+                                                 new_origin[2] - data[i][2, -1]])
+            data[i][0] += distance_to_shift_smooth[0]
+            data[i][1] += distance_to_shift_smooth[1]
+            data[i][2] += distance_to_shift_smooth[2]
+
+    # Move to new origin
+    for i in range(len(raw_data)):
+        raw_data[i][0] -= new_origin[0]
+        raw_data[i][1] -= new_origin[1]
+        raw_data[i][2] -= new_origin[2]
+        data[i][0] -= new_origin[0]
+        data[i][1] -= new_origin[1]
+        data[i][2] -= new_origin[2]
+
+    return raw_data, data
 
 
-def inverse_reframe_curves(curves, pt):
-    """Inverts the change made by reframe_curves to make data suitable to be
-       interpreted by the robot."""
-    for i in range(len(curves)):
-        curves[i][0] += pt[0]
-        curves[i][1] += pt[1]
-        curves[i][2] += pt[2]
-    return curves
+def inverse_reframe_curves(raw_data, origin):
+    # Define the current origin
+    for i in range(len(raw_data)):
+        raw_data[i][0] -= origin[0]
+        raw_data[i][1] -= origin[1]
+        raw_data[i][2] -= origin[2]
+    return raw_data
+
+
+def inverse_reframe_rep_traj(rep_traj, pt):
+    """Inverts the change made by reframe_curves to make reproduced
+       trajectory suitable to be interpreted by the robot."""
+    # Reframe rerpodudced trajectory
+    rep_traj[0] += pt[0]
+    rep_traj[1] += pt[1]
+    rep_traj[2] += pt[2]
+    return rep_traj
 
 
 def get_tnb(dirx):
@@ -231,18 +239,19 @@ def get_tnb(dirx):
     en[0, 0] = et[2, 0] * et[0, 0]
     en[1, 0] = et[2, 0] * et[1, 0]
     en[2, 0] = -(np.square(et[0, 0]) + np.square(et[1, 0]))
-    en[::, 0] = normalization(en[::, 0])
+    en[:, 0] = normalization(en[:, 0])
 
     # Propogate N and B along directrix based on first Normal
+
     for i in range(len(et[0])):
-        eb[::, i] = normalization(np.cross(en[::, i], et[::, i]))
-        en[::, i + 1] = normalization(np.cross(et[::, i], eb[::, i]))
+        eb[:, i] = normalization(np.cross(en[:, i], et[:, i]))
+        en[:, i + 1] = normalization(np.cross(et[:, i], eb[:, i]))
 
     # Normailze Normal and Binormal
     en = np.apply_along_axis(normalization, axis=0, arr=en)
     eb = np.apply_along_axis(normalization, axis=0, arr=eb)
 
-    return et, en[::, 1::], eb
+    return et, en[:, 0:(len(en[0]) - 1)], eb
 
 
 def get_distance(p1, p2):
@@ -256,142 +265,202 @@ def define_plane(p, t):
     return -1.0 * ((t[0] * p[0]) + (t[1] * p[1]) + (t[2] * p[2]))
 
 
-def slice_data(demonstration_data, directrix, t, n, b, num_points, tolerance, window_size):
-    """Slices the directrix at the ends so that at every directrix point, a plane can be defined
-       that intersects every demonstration.
-       Demonstration data = array of 3D curves
-       Dirextrix = 3D mean curve
-       t, n, b are the TNB frames
-       Requires a defined tolerance and window_size (See main)"""
-    # Define the number of trajectories
-    num_traj = len(demonstration_data)
+def project_point_to_plane(p, t, other_p):
+    """Projects a point (other p) to a plane defined by an origin point (p)
+    and the tangent vector at that point (t). Returns projected point."""
+    # Define a vector between the points
+    v = np.array([other_p[0] - p[0], other_p[1] - p[1], other_p[2] - p[2]])
+    # Get distance to subtract from other p
+    dist = v[0] * t[0] + v[1] * t[1] + v[2] * t[2]
+    dists_to_subtract = dist * t
+    # Subtract distance from other_p to get projected point
+    return np.subtract(other_p, dists_to_subtract)
 
-    # Start at beggining, find first point where a plane can be defined
-    start_plane_defined = False
-    start_i = 0
-    while not start_plane_defined:
-        # Define plane at point of interest
-        d = define_plane(directrix[::, start_i], t[::, start_i])
-        # Start by assuming it is defined
-        start_plane_defined = True
-        for i in range(num_traj):
-            # Define comparison array, find point closest to plane of interest
-            comparison_array = np.absolute(
-                t[0, start_i] * demonstration_data[i][0] + t[1, start_i] * demonstration_data[i][1] + t[
-                    2, start_i] * demonstration_data[i][2] + d)
-            min_index = np.where(comparison_array == np.amin(comparison_array))
-            min_index = min_index[0][0]
-            # If the point is too far away, we know we can not define the start yet
-            if comparison_array[min_index] > tolerance:
-                start_plane_defined = False
-            else:
-                # Ensure that point that is tolerable is within a reasonable distance from the directrix point,
-                # defined by window_size
-                while comparison_array[min_index] <= tolerance and np.absolute(start_i - min_index) > window_size:
-                    comparison_array = np.delete(comparison_array, min_index)
-                    min_index = np.where(comparison_array == np.amin(comparison_array))
-                    min_index = min_index[0][0]
-                    # Break if no reasonable point is found on the demonstration
-                    if len(comparison_array) == 0:
-                        break
-                # If no reasonable point found, move to the next point
-                if not (np.absolute(start_i - min_index) <= window_size and comparison_array[min_index] <= tolerance and
-                        len(comparison_array) != 0):
+
+def slice_and_sample_demos(raw_demos, num_points_to_sample=500, spline_degree=5, smoothing_factor=0.001, start_cut="auto", end_cut=50):
+    """Multi-step procedure to process raw demonstrations for calculation.
+       Takes a list of raw demonstrations, each being a list of x y z of a certain length
+       based on how the demonstrations were recorded.
+       Returns an array of smoothed demonstrations."""
+    # Define number of raw demonstrations
+    num_demos = len(raw_demos)
+
+    """ Step 1) Remove duplicate points in the demos"""
+    # Init New arrays for trimmed x, y, and z
+    trim_raw_demos = []
+    for raw_demo in raw_demos:
+        # Define a number of points
+        num_points = len(raw_demo[0])
+
+        # Init arrays for new x, y, and z
+        trim_x = [raw_demo[0][0]]
+        trim_y = [raw_demo[1][0]]
+        trim_z = [raw_demo[2][0]]
+
+        # Walk through the list of points and ignore adjacent points that are practically identical
+        for i in range(num_points - 1):
+            if not (np.absolute(raw_demo[0][i] - raw_demo[0][i + 1]) < 0.0001 and np.absolute(
+                    raw_demo[1][i] - raw_demo[1][i + 1]) < 0.0001 and np.absolute(
+                    raw_demo[2][i] - raw_demo[2][i + 1]) < 0.0001):
+                trim_x.append(raw_demo[0][i + 1])
+                trim_y.append(raw_demo[1][i + 1])
+                trim_z.append(raw_demo[2][i + 1])
+        trim_raw_demos.append(np.array([trim_x, trim_y, trim_z]))
+
+    """Step 2) Slice the ends of the raw demonstrations"""
+    # pts_per_demo = np.empty(num_demos, dtype=int)
+    smoothed_sliced_demos = []
+    for i in range(num_demos):
+        # For each demonstration, define a slope/tangent function
+        t = np.apply_along_axis(np.gradient, axis=1, arr=trim_raw_demos[i])
+        t = np.apply_along_axis(normalization, axis=0, arr=t)
+
+        # Slice the beggining of the current demonstrations, to make it level with all other demos
+        if start_cut == "auto":
+            start_i = 0
+            for j in range(num_demos):
+                if j != i:
                     start_plane_defined = False
-        start_i += 1
+                    while not start_plane_defined:
+                        start_plane_defined = True
+                        # Define the number of points of the current demo
+                        num_points = len(trim_raw_demos[j][0])
+                        # Define the current plane itself
+                        d = define_plane(trim_raw_demos[i][:, start_i], t[:, start_i])
+                        # Get indices of intersection with the plane
+                        plane_intersections = argrelextrema(np.absolute(
+                            t[0, start_i] * trim_raw_demos[j][0] + t[1, start_i] *
+                            trim_raw_demos[j][1] + t[2, start_i] *
+                            trim_raw_demos[j][2] + d), np.less)[0]
+                        # First intersection within the first chunk of demonstration tells us that the two compared demonstrations
+                        # are level enough
+                        if len(plane_intersections) < 1 or plane_intersections[0] not in range(0, int(0.2 * num_points)):
+                            start_i += 1
+                            start_plane_defined = False
+        else:
+            start_i = start_cut
 
-    # Start from end, find last point where plane can be defined
-    end_plane_defined = False
-    end_i = num_points - 1
-    while not end_plane_defined:
-        # Define plane at point of interest
-        d = define_plane(directrix[::, end_i], t[::, end_i])
-        # Start by assuming it is defined
-        end_plane_defined = True
-        for i in range(num_traj):
-            # Define comparison array
-            comparison_array = np.absolute(t[0, end_i] * demonstration_data[i][0] + t[1, end_i] * demonstration_data[i][1] + t[
-                2, end_i] * demonstration_data[i][2] + d)
-            min_index = np.where(comparison_array == np.amin(comparison_array))
-            min_index = min_index[0][0]
-            # If the point is too far away, we know we can not define the end yet
-            if comparison_array[min_index] > tolerance:
-                end_plane_defined = False
-            else:
-                # Ensure that point that is tolerable is within a reasonable distance from the directrix point,
-                # defined by window_size
-                while comparison_array[min_index] <= tolerance and np.absolute(end_i - min_index) > window_size:
-                    comparison_array = np.delete(comparison_array, min_index)
-                    min_index = np.where(comparison_array == np.amin(comparison_array))
-                    min_index = min_index[0][0]
-                    # Break if no reasonable point is found on the demonstration
-                    if len(comparison_array) == 0:
-                        break
-                # If no reasonable point found, move to the next point
-                if not (np.absolute(end_i - min_index) <= window_size and comparison_array[min_index] <= tolerance and
-                        len(comparison_array) != 0):
-                    end_plane_defined = False
-        end_i -= 1
-    # Return sliced directrix and TNB frames based on the start and end indices found
-    return directrix[::, start_i:(end_i + 1)], t[::, start_i:(end_i + 1)], n[::, start_i:(end_i + 1)], b[::, start_i:(
-            end_i + 1)]
+        # Defined the newly sliced demo to be smoothed, based on calculated start and given end cut parameter
+        sliced_demo = trim_raw_demos[i][:, start_i:-end_cut]
+
+        """ Step 3) Smooth the demonstrations"""
+        # Define a time range based on the current number of raw points
+        num_captured_points = len(sliced_demo[0])
+        time_range = np.linspace(0.0, 1.0, num_captured_points)
+        t_function = np.linspace(0.0, 1.0, num_points_to_sample)
+
+        # Gerneate 1D interpolation functions for the x, y, and z of each trajectory
+        x_est_func = interpolate.UnivariateSpline(time_range, sliced_demo[0], k=spline_degree, s=smoothing_factor)
+        y_est_func = interpolate.UnivariateSpline(time_range, sliced_demo[1], k=spline_degree, s=smoothing_factor)
+        z_est_func = interpolate.UnivariateSpline(time_range, sliced_demo[2], k=spline_degree, s=smoothing_factor)
+        
+        # Compute sampled arrays for x y z
+        x = np.array([x_est_func(t) for t in t_function])
+        y = np.array([y_est_func(t) for t in t_function])
+        z = np.array([z_est_func(t) for t in t_function])
+
+        """ Evenly spaces points in cartesian space. Can provide more accurate results with less points, though not neccessary. """
+        """
+        # Compute arc length of curve by sampling at high rate (num points in t_function)
+        x_arc = np.array([np.square(x_est_func(t_function[t]) - x_est_func(t_function[t - 1])) for t in range(1, len(t_function))])
+        y_arc = np.array([np.square(y_est_func(t_function[t]) - y_est_func(t_function[t - 1])) for t in range(1, len(t_function))])
+        z_arc = np.array([np.square(z_est_func(t_function[t]) - z_est_func(t_function[t - 1])) for t in range(1, len(t_function))])
+        arc_length = np.sum(np.sqrt(x_arc + y_arc + z_arc))
+
+        # Determine distance between evenly spaced points based on arc length
+        approx_delta_dist = arc_length / 400.0
+
+        # Evenly space the points (derived from https://stackoverflow.com/questions/19117660/how-to-generate-equispaced-interpolating-values/19118984#19118984)
+        j, idx = 0, [0]
+        while j + 1 < len(x_arc):
+            total_dist = 0
+            for k in range(j+1, len(x_arc)):
+                total_dist += np.sqrt(x_arc[k] + y_arc[k] + z_arc[k])
+                if total_dist > approx_delta_dist:
+                    idx.append(k)
+                    break
+            j = k+1
+        pts_per_demo[i] = len(idx)
+        
+        # Create arrays for evenly spaced points
+        x_f = x[idx]
+        y_f = y[idx]
+        z_f = z[idx]
+        smoothed_sliced_demos.append(np.array([x_f, y_f, z_f]))
+        """
+
+        # Add smooth, sliced demonstration to the list to be returned
+        smoothed_sliced_demos.append(np.array([x, y, z]))
+
+    """ For evenly spaced algorithm to ensure equal number of points across demonstrations """
+    """
+    # Slice a couple points in the begginging of some demonstrations to ensure that
+    # There is the same number of points <--- TO BE CHANGED
+    for i in range(num_demos):
+        if len(smoothed_sliced_demos[i][0]) > min(pts_per_demo):
+            while len(smoothed_sliced_demos[i][0]) != min(pts_per_demo):
+                smoothed_sliced_demos[i] = np.delete(smoothed_sliced_demos[i], 0, axis=1)
+    """
+    return np.array(smoothed_sliced_demos)
 
 
-def get_canal_surface(dirx, data, et, tolerance):
-    """Generates a canal surface (list of radii with as many points as the directrix)
-       Data = array of 3D curves
-       dirx = 3D mean curve
-       et = is the tangent vectors at each point on the directrix (See get_tnb)
-       """
-    # Define a number of points and number of trajectories
+def get_canal_surface(dirx, data, et, window_size):
+    """Uses a defined window size to construct a canal surface from a set of smooothed
+       demonstrations (data), a directrix/spine curve (dirx), and the tangent vectors at
+       each directrix point (et). Returns an array of radii, one for each directrix point."""
+
+    # Define number of demonstrations
+    num_demo = len(data)
+    # Define the number of points
     num_points = len(dirx[0])
-
-    # Define a container for the radii
+    # Init array container for radii of the canal surface
     radii = np.empty(num_points)
 
-    # Calculated distance to directrix of each demonstration for the point at (i - 1)
-    prev_radii = np.zeros(len(data), dtype=float)
-
     # Loop over points in the directrix
+    prev_radii = np.zeros(num_demo, dtype=float)
     for i in range(num_points):
         # Define the directrix point at each step
         pt = dirx[:, i]
+
+        # Define the window at the current step
+        increment = int(max(0, i - math.floor(window_size / 2)))
+        window = range(increment, (window_size + increment))
+        if max(window) >= num_points:
+            window = range((num_points - window_size), num_points)
 
         # Define the plane at the current step
         d = define_plane(pt, et[:, i])
 
         # Loop over each demonstration
-        possible_radii = np.empty(len(data))
-        for j in range(len(data)):
-            # Find closes point on the demonstration to the plane of interest
-            points = data[j, :, :]
-            point_comparisons = np.absolute(
-                et[0][i] * points[0] + et[1][i] * points[1] + et[2][i] * points[2] + d)
-            best_pt_index = np.where(point_comparisons == min(point_comparisons))
-            best_pt_index = best_pt_index[0][0]
+        possible_radii = np.zeros(len(data), dtype=float)
+        for j in range(num_demo):
+            # Find where the demo intersects with the plane within the window
+            windowed_points = data[j, :, min(window):max(window) + 1]
+            windowed_comparisons = np.absolute(
+                et[0][i] * windowed_points[0] + et[1][i] * windowed_points[1] + et[2][i] * windowed_points[2] + d)
+            index_canidates = list(argrelextrema(windowed_comparisons, np.less)[0])
+            if windowed_comparisons[0] < windowed_comparisons[1]:
+                index_canidates = [0] + index_canidates
+            if windowed_comparisons[window_size - 1] < windowed_comparisons[window_size - 2]:
+                index_canidates = index_canidates + [window_size - 1]
 
-            # Calculate distance between point of interest and directrix point, store for later comparison
-            possible_radii[j] = get_distance(points[:, best_pt_index], pt)
-            if i != 0:
-                # If there is a massive jump between radii, we know that the radius is inaccurate
-                # (happens when plane intersects multiple points on a demonstration)
-                check_values = np.zeros(len(point_comparisons), dtype=int)
-                while possible_radii[j] >= prev_radii[j] * 1.1 or possible_radii[j] <= prev_radii[j] * 0.9:
-                    # If it cant find a point within a tolerance, just maintain the radius from the previous point
-                    # (In progress/To be modified)
-                    if point_comparisons[best_pt_index] > tolerance:
-                        possible_radii[j] = prev_radii[j - 1]
-                        break
-                    # Delete innaccurate point, find the next closest point to the plane
-                    point_comparisons = np.delete(point_comparisons, best_pt_index)
-                    best_pt_index = np.where(point_comparisons == min(point_comparisons))
-                    best_pt_index = best_pt_index[0][0]
-                    possible_radii[j] = get_distance(points[:, best_pt_index], pt)
-            # Keep track of the radius before the current point
+            # Project each intersection to plane, and take the distance closest to the previously calculated distance
+            last_raw_distance = 0.0
+            for index_canidate in index_canidates:
+                plane_pt = project_point_to_plane(pt, et[:, i], windowed_points[:, index_canidate])
+                # print(et[0, i] * plane_pt[0] + et[1, i] * plane_pt[1] + et[2, i] * plane_pt[2] + d)
+                projected_distance = get_distance(plane_pt, pt)
+                raw_distance = get_distance(windowed_points[:, index_canidate], pt)
+                if possible_radii[j] == 0.0 or (raw_distance < last_raw_distance):
+                    possible_radii[j] = projected_distance
+                    last_raw_distance = raw_distance
+
+            # Keep track of previous distances
             prev_radii[j] = possible_radii[j]
 
-        # Find maximum of relevant points
+        # Find maximum distance of relevant points, use as radius
         radii[i] = np.amax(possible_radii)
+        # print(radii[i], np.where(possible_radii == np.amax(possible_radii))[0][0])
     return radii
 
 
@@ -403,7 +472,9 @@ def get_p0(i, dirx, ri, en, eb):
        en, eb = Normal and Binormal vectors (see get_tnb)"""
     # Define a random magnitude and angle
     angle = np.random.uniform(0.0, (2.0 * np.pi))
+    angle = np.pi / 4.0
     mag = np.random.uniform(0.0, ri[i])
+    mag = ri[i]
 
     # Determine point's x, y, and z based on angle, magnitude,
     # and the normal and binormal vectors at the starting directrix point
@@ -415,21 +486,23 @@ def get_p0(i, dirx, ri, en, eb):
 
 def get_rep_traj(p0, dirx, ri, et, en, eb):
     """Create a reproduced trajectory from an initial starting point,
-       p0 using the generated canal surface
+       p0, using the generated canal surface.
        p0 = initial position of the robot [x, y, z]
-       dirx = 3D mean curve
+       dirx = mean curve
        ri = radii of the canal surface
-       et, en, eb = arrays of tangent, normal, and binormal vectors respectively (see get_tnb)"""
+       et, en, eb = arrays of tangent, normal, and binormal vectors respectively"""
 
-    # Determine index of previous/starting point relative to the frames
-    comparison_array = np.array([np.absolute(
+    # Determine closest plane to the starting point
+    distances_to_each_plane = np.array([np.absolute(
         define_plane(np.array([dirx[0][j], dirx[1][j], dirx[2][j]]), np.array([et[0][j], et[1][j], et[2][j]])) +
         et[0][j] * p0[0] + et[1][j] * p0[1] + et[2][j] * p0[2]) for j in range(len(dirx[0]))])
-    p0_index = np.where(comparison_array == np.amin(comparison_array))
-    p0_index = p0_index[0][0]
+    p0_index = np.where(distances_to_each_plane == np.amin(distances_to_each_plane))[0][0]
 
-    # Calculate length between directrix and starting point
-    p0c0 = get_distance(p0, np.array([dirx[0][p0_index], dirx[1][p0_index], dirx[2][p0_index]]))
+    # Project the point to that plane
+    projected_p0 = project_point_to_plane(dirx[:, p0_index], et[:, p0_index], p0)
+
+    # Get the length between directrix and starting point, used for calculating the ratio
+    p0c0 = get_distance(projected_p0, np.array([dirx[0][p0_index], dirx[1][p0_index], dirx[2][p0_index]]))
 
     # Determine ratio
     if p0c0 > ri[p0_index]:
@@ -437,34 +510,29 @@ def get_rep_traj(p0, dirx, ri, et, en, eb):
     else:
         ratio = p0c0 / ri[p0_index]
 
-    # Define lists for the x, y, and z of the reproduced trajectory
-    x = []
-    y = []
-    z = []
+    # Initialize a container for the reproduced trajectory
+    reproduced_trajectory = np.empty((3, (len(ri) - p0_index)), dtype=float)
+    reproduced_trajectory[0][0] = projected_p0[0]
+    reproduced_trajectory[1][0] = projected_p0[1]
+    reproduced_trajectory[2][0] = projected_p0[2]
 
     # Center point vector at the origin
-    p0 = np.array([p0[0] - dirx[0][p0_index], p0[1] - dirx[1][p0_index], p0[2] - dirx[2][p0_index]])
+    projected_p0 = np.array([projected_p0[0] - dirx[0][p0_index], projected_p0[1] - dirx[1][p0_index], projected_p0[2] - dirx[2][p0_index]])
 
-    # Define transformation matrix between XYZ and initial point TNB
-    p0_frame = np.array([[et[0][p0_index], et[1][p0_index], et[2][p0_index]],
-                         [en[0][p0_index], en[1][p0_index], en[2][p0_index]],
-                         [eb[0][p0_index], eb[1][p0_index], eb[2][p0_index]]])
-
-    # Perform XYZ to Inital Point's TNB Transformation
-    p0 = np.matmul(p0_frame, p0)
-
-    # Force tangent component to 0 for minimal error accumulation
-    p0[0] = 0.0
+    # Define TNB frame at initial cross section
+    p0_frame = np.array([et[:, p0_index],
+                         en[:, p0_index],
+                         eb[:, p0_index]])
 
     # Translate the point across the canal surface, once for each point on the directrix
-    i = p0_index
+    i = p0_index + 1
     while i < len(ri):
-        # Determine transformation matrix between XYZ and current point's TNB frame
-        curr_frame = np.array([[et[0][i], et[1][i], et[2][i]],
-                               [en[0][i], en[1][i], en[2][i]],
-                               [eb[0][i], eb[1][i], eb[2][i]]])
+        # Define TNB frame at current cross section
+        curr_frame = np.array([et[:, i],
+                               en[:, i],
+                               eb[:, i]])
 
-        # Determine transformation matrix between the first points TNB frame and the current points TNB frame
+        # Determine transformation matrix between p0's TNB frame and the current cross section's TNB frame
         T = np.array([[(np.dot(p0_frame[0], curr_frame[0])), (np.dot(p0_frame[1], curr_frame[0])),
                        (np.dot(p0_frame[2], curr_frame[0]))],
                       [(np.dot(p0_frame[0], curr_frame[1])), (np.dot(p0_frame[1], curr_frame[1])),
@@ -472,29 +540,24 @@ def get_rep_traj(p0, dirx, ri, et, en, eb):
                       [(np.dot(p0_frame[0], curr_frame[2])), (np.dot(p0_frame[1], curr_frame[2])),
                        (np.dot(p0_frame[2], curr_frame[2]))]])
 
-        # Perform initial point's TNB frame to current point's TNB frame transformation
-        new_pt = np.matmul(T, p0)
-
-        # Force tangent component to 0 for minimal error accumulation
-        new_pt[0] = 0.0
-
-        # Perform current point's TNB frame to XYZ transformation using the inverse of current point's TNB frame
-        new_pt = np.matmul(np.rot90(np.fliplr(curr_frame)), new_pt)
+        # Perform the transformation to get the new translated point
+        new_pt = np.matmul(T, projected_p0)
 
         # Scale the point in accordance with the ratio rule
         new_pt = (ratio * ri[i] * new_pt) / np.linalg.norm(new_pt)
 
-        # Add to new point to the list of x, y, and z of reproduced curve
-        x.append(dirx[0][i] + new_pt[0])
-        y.append(dirx[1][i] + new_pt[1])
-        z.append(dirx[2][i] + new_pt[2])
+        # Add to new point to the reproduced trajectory
+        reproduced_trajectory[0][i] = dirx[0][i] + new_pt[0]
+        reproduced_trajectory[1][i] = dirx[1][i] + new_pt[1]
+        reproduced_trajectory[2][i] = dirx[2][i] + new_pt[2]
 
         # Move to the next point
         i += 1
-    return np.array([x, y, z])
+
+    return reproduced_trajectory
 
 
-def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, num_circ=20):
+def plot_canal_surface_and_result(raw_data, data, dirx, ri, reproduced_traj, et, en, eb, num_circ=20):
     """Plot the demonstration data, canal surface, and reproduction all at once.
        Used almost solely for debugging, as in real cases data is shown to the user periodically.
        data = array of 3D curves
@@ -505,6 +568,7 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
        num_circ = number of cricles to show on the plot (not exact since data can have varying lengths)"""
 
     # Choose what will be shown in the plot
+    do_plot_raw = False
     do_plot_demonstrations = True
     do_plot_directrix = True
     do_plot_circles = True
@@ -512,9 +576,15 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
     do_plot_TNB = False
     do_plot_point_markers = False
     do_plot_radii_v_time = True
+    do_plot_raw_demos_axis_wise = False
 
     # Set up 3D plot
     ax = plt.axes(projection='3d')
+
+    # Plot raw demonstrations
+    if do_plot_raw:
+        for raw_dem in raw_data:
+            ax.plot3D(raw_dem[0], raw_dem[1], raw_dem[2], 'orange')
 
     # Plot Demonstrations
     if do_plot_demonstrations:
@@ -551,15 +621,16 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
 
     # Plot point markers (for debugging reproduced curve)
     if do_plot_point_markers:
-        for i in range(len(reproduced_traj[0])):
-            ax.plot3D(reproduced_traj[0][i], reproduced_traj[1][i], reproduced_traj[2][i], marker='.', markersize=20)
+        for i in range(len(data)):
+            for j in range(len(data[0][0])):
+                ax.plot3D([data[i][0][j]], [data[i][1][j]], [data[i][2][j]], marker="*", markersize=5)
 
     # Plot T, N, B parameters (for various debugging)
     if do_plot_TNB:
         # Change factor based on size of data
-        et *= 0.2
-        en *= 0.2
-        eb *= 0.2
+        et *= 0.02
+        en *= 0.02
+        eb *= 0.02
         for i in range(0, len(en[0]), 5):
             ax.quiver(dirx[0][i], dirx[1][i], dirx[2][i], et[0][i], et[1][i], et[2][i], color=['r'])
         for i in range(0, len(en[0]), 5):
@@ -567,6 +638,24 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
         for i in range(0, len(eb[0]), 5):
             ax.quiver(dirx[0][i], dirx[1][i], dirx[2][i], eb[0][i], eb[1][i], eb[2][i], color=['b'])
 
+    # Set plot limits for 3D plot, make equal, then plot
+    xl, xr = plt.xlim()
+    yl, yr = plt.ylim()
+    zb, zt = ax.get_zlim()
+    axis_limits = [abs(xr - xl), abs(yr - yl), abs(zt - zb)]
+    if axis_limits.index(max(axis_limits)) == 0:
+        ax.set_ylim(ax.get_ylim()[0], yr + (axis_limits[0] - axis_limits[1]))
+        ax.set_zlim(ax.get_zlim()[0], zt + (axis_limits[0] - axis_limits[2]))
+    elif axis_limits.index(max(axis_limits)) == 1:
+        ax.set_xlim(ax.get_xlim()[0], xr + (axis_limits[1] - axis_limits[0]))
+        ax.set_zlim(ax.get_zlim()[0], zt + (axis_limits[1] - axis_limits[2]))
+    else:
+        ax.set_xlim(ax.get_xlim()[0], xr + (axis_limits[2] - axis_limits[0]))
+        ax.set_ylim(yl - (axis_limits[2] - axis_limits[1]), ax.get_ylim()[1])
+
+    plt.show()
+
+    """ 2D/Debugging Plots """
     # Plot radius as a function of time
     if do_plot_circles and do_plot_radii_v_time:
         ax2d2 = plt.figure(2)
@@ -575,57 +664,110 @@ def plot_canal_surface_and_result(data, dirx, ri, reproduced_traj, et, en, eb, n
         ax2d.plot(range(len(et[0])), ri)
         plt.show()
 
-    plt.show()
+    # Plot the x, y, and z components of the raw demonstrations to check for smoothness
+    if do_plot_raw_demos_axis_wise:
+        fig, axs = plt.subplots(3, len(raw_data))
+        for i in range(len(raw_data)):
+            axs[0, i].plot(np.linspace(0.0, (len(raw_data[i][0]) - 1), len(data[i][0])), data[i][0])
+            axs[0, i].plot(raw_data[i][0], "red")
+            axs[0, i].set_title("X for Demo #" + str(i+1))
+            axs[1, i].plot(np.linspace(0.0, (len(raw_data[i][0]) - 1), len(data[i][0])), data[i][1])
+            axs[1, i].plot(raw_data[i][1], "red")
+            axs[1, i].set_title("Y for Demo #" + str(i + 1))
+            axs[2, i].plot(np.linspace(0.0, (len(raw_data[i][0]) - 1), len(data[i][0])), data[i][2])
+            axs[2, i].plot(raw_data[i][2], "red")
+            axs[2, i].set_title("Z for Demo #" + str(i + 1))
+        plt.show()
+
+
+def export_mat(demonstration_data, directrix, radii, t, n, b):
+    mdic = {"demonstrations": demonstration_data, "directrix": directrix, "radii": radii, "T": t, "N": n,
+            "B": b, "label": "Last entry in bp_arrays is the directrix breakpoints"}
+    savemat("C:\\Users\\psych\\Downloads\\directrix.mat", mdic)
 
 
 def main():
-    """Driver for testing algorithm with precreated demonstration data"""
-    # Choose where to get demonstration data
+    """Driver for testing algorithm with preloaded demonstration data"""
+    # Keep as false since I have modified the mat files used for debugging
     do_get_file_data = True
+    file_data_type = "Reaching"
+
     # Set the number of data points (time steps), the number of demonstrations,
     # and a ballpark for the desired number of circles of the canal surface to be
     # visible (wont be exact due to data inconsistencies)
-    time_step_ct = 1000
     num_demonstrations = 5
-    num_circles = 20
 
-    # How much of the curve is covered from either end until it intersects a plane multiple times
-    window_ratio = 0.1 # <----- ~~~~~~ MUST BE TUNED ACCORDING TO DATA ~~~~~
-    window_size = int(time_step_ct * window_ratio)
-
-    # Set this tolerance to scale with the size of the data (for how close
-    # points have to be to be considered close enough the the plane defined by tangents)
-    tolerance = 0.005 # <----- ~~~~~~ MUST BE TUNED ACCORDING TO DATA ~~~~~~
-
-    # Create synthetic demonstration data 
+    # Load demonstration data either from files or synthetically
     if do_get_file_data:
         raw_data = []
-        for i in range(1, 11):
-            mat = loadmat(os.getcwd() + "/Reaching/reach_" + str(i) + ".mat")
+        if file_data_type == "Reaching":
+            for i in range(1, 11):
+                mat = loadmat("C:\\Users\\psych\\Downloads\\reach_" + str(i) + ".mat")
+                raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+        elif file_data_type == "Smooth Reaching":
+            for i in range(1, 11):
+                mat = loadmat("C:\\Users\\psych\\OneDrive\\Documents\\MATLAB\\sr" + str(i) + ".mat")
+                raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+        elif file_data_type == "Writing":
+            for i in range(1, 11):
+                mat = loadmat("C:\\Users\\psych\\OneDrive\\Documents\\MATLAB\\write_raw_smooth" + str(i) + ".mat")
+                raw_data.append(np.swapaxes(np.array(mat["raw"]), 0, 1))
+        elif file_data_type == "Smooth Writing":
+            for i in range(1, 11):
+                mat = loadmat("C:\\Users\\psych\\OneDrive\\Documents\\MATLAB\\write_raw_smooth" + str(i) + ".mat")
+                raw_data.append(np.swapaxes(np.array(mat["smooth"]), 0, 1))
+        else:
+            """Pushing Data"""
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_1.mat")
+            raw_data.append(np.swapaxes(np.array(mat["push1"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_2.mat")
             raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_3.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_4.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_5.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_6.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_7.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_8.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_9.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+
+            mat = loadmat("C:\\Users\\psych\\Downloads\\push_10.mat")
+            raw_data.append(np.swapaxes(np.array(mat["test"]), 0, 1))
+            raw_data = np.array(raw_data)
     else:
-        raw_data = get_demonstration_data(num_demonstrations, 200)
+        raw_data = get_synthetic_demonstration_data(num_demonstrations, 250)
 
     # Resample data to get new demonstration data
-    demonstration_data = sample_raw_data(raw_data, time_step_ct)
+    if do_get_file_data and (file_data_type == "Smooth Reaching" or file_data_type == "Smooth Writing"):
+        demonstration_data = np.array(raw_data)
+    else:
+        demonstration_data = slice_and_sample_demos(raw_data, num_points_to_sample=500, spline_degree=5, smoothing_factor=0.025, start_cut="auto", end_cut=50)
+
+    # Shift the origin to be the object at the end of the directrix
+    raw_data, demonstration_data = reframe_curves(raw_data, demonstration_data, best_demo_index=0, reaching=True)
 
     # Calculate the mean/directrix curve from trajectories
     directrix = get_mean(demonstration_data)
 
-    # Shift the origin to be the object at the end of the directrix
-    new_origin = directrix[:, -1]
-    demonstration_data = reframe_curves(demonstration_data, new_origin)
-    directrix = reframe_curves([directrix], new_origin)[0]
-
     # Get the TNB frames at each point on the directrix
     t, n, b = get_tnb(directrix)
 
-    # Slice the data at the ends so that every demonstration intersects
-    # the plane defined by the tangent at every directrix point
-    directrix, t, n, b = slice_data(demonstration_data, directrix, t, n, b, time_step_ct, tolerance, window_size)
-
     # Generate the canal surface
-    radii = get_canal_surface(directrix, demonstration_data, t, tolerance)
+    radii = get_canal_surface(directrix, demonstration_data, t, window_size=50)
 
     # Generate a random starting point for reproduction
     p0 = get_p0(0, directrix, radii, n, b)
@@ -634,7 +776,9 @@ def main():
     result = get_rep_traj(p0, directrix, radii, t, n, b)
 
     # Plot canal surface and results from collected data
-    plot_canal_surface_and_result(demonstration_data, directrix, radii, result, t, n, b, num_circles)
+    plot_canal_surface_and_result(raw_data, demonstration_data, directrix, radii, result, t, n, b)
+
+    # export_mat(demonstration_data, directrix, radii, t, n, b)
 
 
 if __name__ == '__main__':
