@@ -1,0 +1,3 @@
+<launch>
+    <node pkg="lfd_canal_surface_pkg" type="construct_cs.py" name="cs_constructor" output="screen"/>
+</launch>

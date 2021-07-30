@@ -1,0 +1,7 @@
+std_msgs/Float64MultiArray[] demonstrations
+---
+std_msgs/Float64MultiArray directrix
+float64[] radii
+std_msgs/Float64MultiArray tangent
+std_msgs/Float64MultiArray normal
+std_msgs/Float64MultiArray binormal

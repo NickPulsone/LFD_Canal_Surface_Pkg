@@ -1,0 +1,4 @@
+<launch>
+    <include file="$(find lfd_canal_surface_pkg)/launch/canal_surface_server.launch"/>
+    <node pkg="lfd_canal_surface_pkg" type="data_collection.py" name="data_collect" output="screen"/>
+</launch>
