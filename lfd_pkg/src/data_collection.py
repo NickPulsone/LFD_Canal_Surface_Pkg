@@ -28,17 +28,17 @@ from lfd_canal_surface_pkg.srv import CanalSrv, CanalSrvRequest
 """TUNABLE PARAMTERS"""
 
 # Number of points that smooth demonstrations will consist of
-num_points_to_sample = 500 
+num_points_to_sample = 500
 
 # Degree of spline interpolation
-spline_degree = 5
+spline_degree = 3
 
 # Smoothing factor of demonstrations (closer to 0 means less smooth, closer to 1 means more smooth)
-smoothing_factor = 0.025
+smoothing_factor = 0.0001
 
 # Number of points to cut off the start and end of each demonstration
 start_cut = 0
-end_cut = 5
+end_cut = 2
 
 """ Helper functions """
 
@@ -226,7 +226,7 @@ class MoveGroupPythonInterface(object):
         self.plot_curve_single(-1, raw=True)
 
         # Save demonstration if the user is satisfied, close plot
-        save_demo = get_y_n("Would you like to save this demonstration (Y/N)?")
+        save_demo = get_y_n("Would you like to save this demonstration (Y/N)?: ")
         plt.close()
 
         # Determine if the demonstration needs to be rerecorded. If not, add to data.
@@ -287,7 +287,7 @@ class MoveGroupPythonInterface(object):
         self.plot_curve_single(-1, raw=True)
 
         # Save demonstration if the user is satisfied, close plot
-        save_demo = get_y_n("Would you like to save this demonstration (Y/N)?")
+        save_demo = get_y_n("Would you like to save this demonstration (Y/N)?: ")
         plt.close()
 
         # Determine if the demonstration needs to be rerecorded. If not, add to data.
@@ -349,7 +349,7 @@ class MoveGroupPythonInterface(object):
         """ Provide user with an interface to smooth demonstrations """
         # Get global values for smoothing parameters
         global num_points_to_sample, spline_degree, smoothing_factor, start_cut, end_cut
-        get_smoothing_parameters = get_y_n("Would you like to enter/update the smoothing parameters (otherwise deafults or last used parameters will be applied, Y/N)?: ")
+        get_smoothing_parameters = get_y_n("\nWould you like to enter/update the smoothing parameters (otherwise deafults or last used parameters will be applied, Y/N)?: ")
         # Allow user to update parameters
         if get_smoothing_parameters:
             smoothing_is_good = False
@@ -379,7 +379,7 @@ class MoveGroupPythonInterface(object):
         self.plot_curves(raw=True)
 
         # Ask which demonstration is the best
-        best_dem = int(raw_input("What is the # of the demonstration that you think is the best?: "))
+        best_dem = int(raw_input("\nWhat is the # of the demonstration that you think is the best?: "))
         while best_dem < 1 or best_dem > len(self.raw_demonstrations):
             best_dem = int(raw_input("Please enter a valid positive integer that corresponds to a demonstration: "))
 
@@ -565,6 +565,7 @@ class MoveGroupPythonInterface(object):
             action = raw_input(prompt)
             while (len(action) == 0) or (not action[0].isalpha()) or (action[0].upper() not in ["D", "A", "C"]):
                 action = raw_input(prompt)
+            print("")
 
             # User wants to remove a demonstration
             if action[0].upper() == "D":
@@ -582,7 +583,7 @@ class MoveGroupPythonInterface(object):
                 self.define_new_origin()
 
 
-    def request_canal_surface(self):
+    def request_canal_surface(self, smooth=False):
         # Establish connection to canal surface server
         rospy.wait_for_service('/canal_surface')
         connect_to_algorithm = rospy.ServiceProxy('/canal_surface', CanalSrv)
@@ -616,10 +617,16 @@ class MoveGroupPythonInterface(object):
         self.B = np.array([canal_response.binormal.data[0:num_points_to_sample], 
                                    canal_response.binormal.data[num_points_to_sample:2*num_points_to_sample], 
                                    canal_response.binormal.data[2*num_points_to_sample:]])
-        self.radii = canal_response.radii
+
+        # If the user wishes, smooth the radii over time to create a
+        # smoother path for the robot to follow during reproduction
+        if smooth:
+            self.radii = smooth_radii(canal_response.radii)
+        else:
+            self.radii = canal_response.radii
 
 
-    def get_idx(self):
+    def get_idx(self, random=False):
         """ Get the start and end values of where on the canal surface reproduction should take place """
         # Close any opened windows
         if plt.get_fignums():
@@ -631,15 +638,18 @@ class MoveGroupPythonInterface(object):
         ax2d.plot(range(len(self.radii)), self.radii)
         plt.show()
 
-        # Ask for good start point for reproduction
-        start = int(raw_input("At what index would you like to start reproduction?: "))
-        while start < 0 and start >= len(self.radii):
-            start = int(raw_input("Plase enter a valid integer corresponding to a value on the x-axis of the shown graph: "))
+        # Ask for good start point for reproduction if reproducing randomly on such starting crossection
+        if random:
+            start = int(raw_input("\nAt what index would you like to start reproduction?: "))
+            while start < 0 and start >= len(self.radii):
+                start = int(raw_input("Plase enter a valid integer corresponding to a value on the x-axis of the shown graph: "))
+        else:
+            start = 0
 
         # Ask for good end point for reproduction
-        end = len(self.radii) - int(raw_input("At what index would you like to end reproduction?: "))
+        end = (len(self.radii) + 1) - int(raw_input("\nAt what index would you like to end reproduction?: "))
         while end < 0 and end >= len(self.radii):
-            end = len(self.radii) - int(raw_input("Plase enter a valid integer corresponding to a value on the x-axis of the shown graph: "))
+            end = (len(self.radii) + 1) - int(raw_input("Plase enter a valid integer corresponding to a value on the x-axis of the shown graph: "))
 
         return [start, end]
 
@@ -647,7 +657,7 @@ class MoveGroupPythonInterface(object):
     def store_p0_as_current_position(self):
         """ Will record a single position of the robot to use as the starting point of reproduction """
         # Prompt user to move robot to the starting position
-        print("Please move the robot to your desired starting position for reproduction.\nPress 'Enter' when your robot it ready.")
+        print("\nPlease move the robot to your desired starting position for reproduction.\n\nPress 'Enter' when your robot it ready.")
         raw_input()
         # Record starting position, store, and return
         print("Recording starting position...\n")
@@ -693,9 +703,10 @@ class MoveGroupPythonInterface(object):
         return self.p0_for_reproduction
 
 
-    def execute_reproduction(self):
+    def execute_reproduction(self, random=False):
         """ Attempts to execute the reproduced trajectory, prompting the robot to move 
             Returns T/F based on whether the robot was able to successfully reproduce the trajectory"""
+
         # Get the orientation of the robot's starting position
         orientation = np.array([self.p0_for_reproduction.orientation.x, 
                                 self.p0_for_reproduction.orientation.y, 
@@ -712,52 +723,64 @@ class MoveGroupPythonInterface(object):
         waypoints = xyz_to_pose(curve_to_reproduce, orientation)
 
         # Go to the first starting position, display plan to user
+        self.move_group.set_goal_position_tolerance(0.001)
+        self.move_group.set_goal_orientation_tolerance(0.1)
+        self.move_group.set_start_state_to_current_state()
         plan = self.move_group.set_pose_target(waypoints[0])
+
+        # Display plan in rviz
         rospy.sleep(2)
         self.display_trajectory(plan)
         rospy.sleep(2)
 
-        # Go home, and stop
-        print("Press 'Enter' to execute the current plan to the starting position of reproduction.\n")
+        # Go home, and stop. Plan multiple times if needed.
+        print("\nPress 'Enter' to execute the current plan to the starting position of reproduction.\n")
         raw_input()
         plan_to_start_succeeded = self.move_group.go(wait=True)
-        self.move_group.stop()
+        iterations = 0
+        while not plan_to_start_succeeded and iterations < 3:
+            self.move_group.set_start_state_to_current_state()
+            plan = self.move_group.set_pose_target(waypoints[0])
+            plan_to_start_succeeded = self.move_group.go(wait=True)
+            self.move_group.stop()
+            iterations += 1
         self.move_group.clear_pose_targets()
-        if plan_to_start_succeeded:
-            print("Successfully arrived at starting position, ready to reproduce.\n")
-        else:
-            print("Error: could not find path to the start pose. Aborting...\n")
-            exit(1)
 
-        # Try to get a cartesian path plan for the robot using inverse kinematics. Simplify the plan to get best results.
-        self.move_group.set_goal_tolerance(0.2)
+        # If unable to arrive at start, return failure
+        if not plan_to_start_succeeded:
+            print("Move group failed\n")
+            return False
+
+        # Try to get a cartesian path plan for the robot using inverse kinematics. Simplify the plan if it fails.
+        self.move_group.set_start_state_to_current_state()
+        self.move_group.set_goal_position_tolerance(0.02)
+        self.move_group.set_goal_orientation_tolerance(2*np.pi)
         fraction = 0.0
+        iterations = 0
         step = 1
-        while fraction <= 0.5:
-            print("Initiating cartesian planning...\n")
+        while fraction <= 0.99 and iterations < 3:
+            print("Attempt #" + str(iterations+1) + " of cartesian planning...\n")
             (plan, fraction) = self.move_group.compute_cartesian_path(
-                                            waypoints,   # waypoints to follow
+                                            waypoints[1::step],   # waypoints to follow
                                             0.01,                 # eef_step
                                             0.0)                  # jump_threshold
+            rospy.sleep(0.5)
+            step *= 2
+            iterations += 1
 
-            if fraction <= 0.5:
-                print("Found plan, but plan is too inaccurate.\n Simplifying request to robot in attempt to achieve more accurate and doable results.\n")
-                step *= 2
-                waypoints = waypoints[::step]
+        if fraction < 0.99:
+            print("Could not find plan.\n")
+            return False
 
-            if step > len(waypoints) / 4:
-                print("Could not find valid cartesian plan.\n")
-                return False
-
-        print("Success! Path plan found. Publishing to Rviz...\n")
+        print("Success! Path plan found (covers " + str(fraction * 100.0) + " percent of requested path). Publishing to Rviz...\n")
 
         # Display the trajectory in Rviz
-        rospy.sleep(2)
+        rospy.sleep(1)
         self.display_trajectory(plan)
         rospy.sleep(2)
 
         # Execute plan, and stop the robot
-        print("Press Enter to execute after viewing in RVIZ (MotionPlanning -> Planned Path -> Loop Animation)")
+        print("Press 'Enter' to execute after viewing in RVIZ (MotionPlanning -> Planned Path -> Loop Animation)")
         raw_input()
         print("Executing...\n")
         self.move_group.execute(plan, wait=True)
@@ -779,13 +802,13 @@ def main():
             number_of_demonstrations = int(raw_input("Please enter a valid number of demonstrations (> 1): "))
         
         # Ask whether the user is performing a reaching task
-        do_reaching = get_y_n("Are you performing a reaching task, or any other task with a fixed end point (Y/N)?: ")
+        do_reaching = get_y_n("\nAre you performing a reaching task, or any other task with a fixed end point (Y/N)?: ")
 
         # Init the ur5e arm moveit class
         ur5e_arm = MoveGroupPythonInterface(do_reaching)
 
         # Would you like to load demonstrations from a file (Y/N)? The alternative is recording.  
-        do_file_data = get_y_n("Would you like to load demonstrations from a file (Y/N)?: ")
+        do_file_data = get_y_n("\nWould you like to load demonstrations from a file (Y/N)?: ")
 
         if do_file_data:
             for i in range(number_of_demonstrations):
@@ -816,41 +839,58 @@ def main():
         raw_input("\nPress 'Enter' to display recorded demonstrations")
         ur5e_arm.prompt_insertion_and_deletion()
 
-        #Call service for canal surface generation
-        ur5e_arm.request_canal_surface()
-        ur5e_arm.plot_canal_surface(reproduction=False)
-
-        #Initiate trajectory reproduction
-        print("Press 'Enter' to proceed to reproduction.")
-        raw_input()
+        # Whether the starting position is based off the recorded position of the robot, or just random
+        random_p0 = False
 
         # Allow user to perform reproductions as many times as they want
         keep_reproducing = True
-        while keep_reproducing:        
-            reproduction_is_good = False
-            idx = ur5e_arm.get_idx()
-            p0 = ur5e_arm.store_random_p0(idx)
+        while keep_reproducing:
+            #Call service for canal surface generation
+            ur5e_arm.request_canal_surface()
+            ur5e_arm.plot_canal_surface(reproduction=False)
+
+            #Initiate trajectory reproduction
+            print("\nPress 'Enter' to proceed to reproduction.")
+            raw_input()
+            # Get boundries of reproduction and starting point        
+            idx = ur5e_arm.get_idx(random = random_p0)
+            if random_p0:
+                p0 = ur5e_arm.store_random_p0(idx)
+            else:  
+                p0 = ur5e_arm.store_p0_as_current_position()
+            # Get reproduction and show user
             ur5e_arm.get_reproduction(p0, idx)
             ur5e_arm.plot_canal_surface(reproduction=True)
             # Allow user to add and remove demonstrations to see how reproduction changes
-            change_reproduction = get_y_n("Would you like to see how this reproduced trajectory changes by adding or removing demonstrations (Y/N)?: ")
+            change_reproduction = get_y_n("Would you like to see how a reproduced trajectory would change by adding or removing demonstrations (Y/N)?: ")
             while change_reproduction:
                 ur5e_arm.prompt_insertion_and_deletion()
                 ur5e_arm.request_canal_surface()
                 ur5e_arm.plot_canal_surface(reproduction=False)
                 raw_input("Press 'Enter' to proceed to reproduction")
-                idx = ur5e_arm.get_idx()
-                p0 = ur5e_arm.store_random_p0(idx)
+                # Get boundries and starting point again again
+                idx = ur5e_arm.get_idx(random=random_p0)
+                if random_p0:
+                    p0 = ur5e_arm.store_random_p0(idx)
+                else:
+                    p0 = ur5e_arm.store_p0_as_current_position()
+                # Show reproduction again, and prompt user if they would like to execute
                 ur5e_arm.get_reproduction(p0, idx)
                 ur5e_arm.plot_canal_surface(reproduction=True)
-                change_reproduction = not get_y_n("Would you like to execute this trajectory (Y/N)?: ")
+                change_reproduction = not get_y_n("Would you like the robot to execute this trajectory (Y/N)?: ")
 
             # Publish response from services to robot and initiate motion
-            ur5e_arm.execute_reproduction()
+            if not ur5e_arm.execute_reproduction(random=random_p0):
+                # Smooth the canal surface and redo reproduction if unable to 
+                # reproduce with current canal surface (likely due to noise)
+                ur5e_arm.request_canal_surface(smooth = True)
+                if random_p0:
+                    p0 = ur5e_arm.store_p0_as_current_position()
+                ur5e_arm.get_reproduction(p0, idx)
+                ur5e_arm.execute_reproduction(random=random_p0)
 
             # Prompt for more iterations of reproduction
             keep_reproducing = get_y_n("Would you like to do another reproduction (Y/N)?: ")
-        
         
         print("\nPress 'Enter' to exit'")
         raw_input()

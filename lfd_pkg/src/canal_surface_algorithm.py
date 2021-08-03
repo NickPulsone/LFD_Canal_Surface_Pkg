@@ -377,6 +377,22 @@ def get_canal_surface(dirx, data, et):
     return radii
 
 
+def smooth_radii(ri):
+    """ Will smooth the radii of the canal surface cross sections over time
+        ri = raw radii calculated from the canal surface algorithm
+        returns smooth radii array with the same length as ri
+    """
+    # Interpolate based on every tenth value
+    radii = ri[::10]
+    smooth_radii_func = interpolate.UnivariateSpline(range(len(radii)), radii, k=3, s=0.00001)
+    # Construct the array with the interpolating function
+    smooth_radii = np.array([smooth_radii_func(t) for t in np.linspace(0, len(radii), len(ri))])
+    # Create a threshold to increase the radii by slightly to account for places
+    # where the some of the circles may have dipped below one of the demonstrations
+    threshold = 0.05 * np.mean([max(ri), min(ri)])
+    return smooth_radii + threshold
+
+
 def get_p0(i, dirx, ri, en, eb):
     """Will generate a random point on the a cross section of the canal surface
        i = index of the cross section where the point in to be defined
@@ -430,7 +446,7 @@ def get_rep_traj(p0, idx, dirx, ri, et, en, eb):
     else:
         ratio = p0c0 / ri[p0_index]
 
-    # Initialize a container for the reproduced trajectory
+    # Initialize a container for the reproduced trajectory (projjjjjj)
     reproduced_trajectory = np.empty((3, (len(ri) - p0_index)), dtype=float)
     reproduced_trajectory[0][0] = projected_p0[0]
     reproduced_trajectory[1][0] = projected_p0[1]
