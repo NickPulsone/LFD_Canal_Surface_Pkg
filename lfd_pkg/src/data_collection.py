@@ -28,13 +28,13 @@ from lfd_canal_surface_pkg.srv import CanalSrv, CanalSrvRequest
 """TUNABLE PARAMTERS"""
 
 # Number of points that smooth demonstrations will consist of
-num_points_to_sample = 500
+num_points_to_sample = 300
 
 # Degree of spline interpolation
 spline_degree = 3
 
 # Smoothing factor of demonstrations (closer to 0 means less smooth, closer to 1 means more smooth)
-smoothing_factor = 0.0001
+smoothing_factor = 0.00001
 
 # Number of points to cut off the start and end of each demonstration
 start_cut = 0
@@ -545,7 +545,11 @@ class MoveGroupPythonInterface(object):
                                               self.p0_for_reproduction.orientation.y, 
                                               self.p0_for_reproduction.orientation.z, 
                                               self.p0_for_reproduction.orientation.w]))
-
+        # Plot object of interest if user is performing a reaching task
+        if self.reaching:
+            # Plot point as a red x
+            ax.plot3D([0.0], [0.0], [0.0], c="red", marker='x', markersize=20)
+            patches.append(mlines.Line2D([], [], color='red', marker='x', linestyle='None', label='Object of Interest'))
         # Plot everything with a legend
         plt.legend(handles=patches)
         plt.show()
@@ -621,7 +625,7 @@ class MoveGroupPythonInterface(object):
         # If the user wishes, smooth the radii over time to create a
         # smoother path for the robot to follow during reproduction
         if smooth:
-            self.radii = smooth_radii(canal_response.radii)
+            self.radii = smooth_radii(canal_response.radii, step=3)
         else:
             self.radii = canal_response.radii
 
@@ -707,6 +711,13 @@ class MoveGroupPythonInterface(object):
         """ Attempts to execute the reproduced trajectory, prompting the robot to move 
             Returns T/F based on whether the robot was able to successfully reproduce the trajectory"""
 
+        # DEBUG
+        """
+        print("\n\nCurrent position before reproduction: ")
+        print(self.move_group.get_current_pose(self.eef_link).pose)
+        print("\n")
+        """
+
         # Get the orientation of the robot's starting position
         orientation = np.array([self.p0_for_reproduction.orientation.x, 
                                 self.p0_for_reproduction.orientation.y, 
@@ -721,7 +732,14 @@ class MoveGroupPythonInterface(object):
         # Create an array of waypoint pose objects based on 
         # the robot's starting orientation and the reproduced trajectory
         waypoints = xyz_to_pose(curve_to_reproduce, orientation)
-
+        
+        # DEBUG
+        """
+        print("First 10: ")
+        for wp in waypoints[0:10]:
+            print(wp)
+        """
+        
         # Go to the first starting position, display plan to user
         self.move_group.set_goal_position_tolerance(0.001)
         self.move_group.set_goal_orientation_tolerance(0.1)
@@ -750,6 +768,8 @@ class MoveGroupPythonInterface(object):
         if not plan_to_start_succeeded:
             print("Move group failed\n")
             return False
+        else:
+            print("\nArrived at starting position. Ready to follow path...")
 
         # Try to get a cartesian path plan for the robot using inverse kinematics. Simplify the plan if it fails.
         self.move_group.set_start_state_to_current_state()
@@ -759,12 +779,13 @@ class MoveGroupPythonInterface(object):
         iterations = 0
         step = 1
         while fraction <= 0.99 and iterations < 3:
-            print("Attempt #" + str(iterations+1) + " of cartesian planning...\n")
+            print("Attempt #" + str(iterations+1) + " of cartesian path execution...\n")
             (plan, fraction) = self.move_group.compute_cartesian_path(
                                             waypoints[1::step],   # waypoints to follow
                                             0.01,                 # eef_step
                                             0.0)                  # jump_threshold
             rospy.sleep(0.5)
+            self.move_group.set_goal_position_tolerance(self.move_group.get_goal_position_tolerance() + 0.01)
             step *= 2
             iterations += 1
 
@@ -789,6 +810,7 @@ class MoveGroupPythonInterface(object):
         print("All done!\n")
 
         return True
+
 
 def main():
     try:
@@ -883,6 +905,7 @@ def main():
             if not ur5e_arm.execute_reproduction(random=random_p0):
                 # Smooth the canal surface and redo reproduction if unable to 
                 # reproduce with current canal surface (likely due to noise)
+                print("\nRestarting trajectory reproduction with a smoother canal surface. Don't move the robot.")
                 ur5e_arm.request_canal_surface(smooth = True)
                 if random_p0:
                     p0 = ur5e_arm.store_p0_as_current_position()

@@ -377,14 +377,15 @@ def get_canal_surface(dirx, data, et):
     return radii
 
 
-def smooth_radii(ri):
+def smooth_radii(ri, step=10):
     """ Will smooth the radii of the canal surface cross sections over time
         ri = raw radii calculated from the canal surface algorithm
         returns smooth radii array with the same length as ri
     """
-    # Interpolate based on every tenth value
-    radii = ri[::10]
+    # Interpolate based on a portion of the data defined by step parameter
+    radii = ri[::step]
     smooth_radii_func = interpolate.UnivariateSpline(range(len(radii)), radii, k=3, s=0.00001)
+
     # Construct the array with the interpolating function
     smooth_radii = np.array([smooth_radii_func(t) for t in np.linspace(0, len(radii), len(ri))])
     # Create a threshold to increase the radii by slightly to account for places
@@ -428,11 +429,25 @@ def get_rep_traj(p0, idx, dirx, ri, et, en, eb):
     eb = eb[:, idx[0]:-idx[1]]
     ri = ri[idx[0]:-idx[1]]
 
+    # Determine number of points based on redefined directrix
+    num_points = len(dirx[0])
+
+    # Define a window of where to search for the closest canal surface plane
+    distances_to_each_dirx_point = np.array([get_distance(dirx[:, i], p0) for i in range(num_points)])
+    closest_index = np.where(distances_to_each_dirx_point == np.amin(distances_to_each_dirx_point))[0][0]
+
+    # Define the window at the current step
+    window_size = int(num_points/3.0)
+    increment = int(max(0, closest_index - math.floor(window_size / 2)))
+    window = range(increment, (window_size + increment))
+    if max(window) >= num_points:
+        window = range((num_points - window_size), num_points)
+
     # Determine closest plane to the starting point (withing first section of the canal surface)
     distances_to_each_plane = np.array([np.absolute(
         define_plane(np.array([dirx[0][j], dirx[1][j], dirx[2][j]]), np.array([et[0][j], et[1][j], et[2][j]])) +
-        et[0][j] * p0[0] + et[1][j] * p0[1] + et[2][j] * p0[2]) for j in range(int(len(dirx[0])/3.0))])
-    p0_index = np.where(distances_to_each_plane == np.amin(distances_to_each_plane))[0][0]
+        et[0][j] * p0[0] + et[1][j] * p0[1] + et[2][j] * p0[2]) for j in window])
+    p0_index = window[np.where(distances_to_each_plane == np.amin(distances_to_each_plane))[0][0]]
 
     # Project the point to that plane
     projected_p0 = project_point_to_plane(dirx[:, p0_index], et[:, p0_index], p0)
@@ -446,19 +461,22 @@ def get_rep_traj(p0, idx, dirx, ri, et, en, eb):
     else:
         ratio = p0c0 / ri[p0_index]
 
-    # Initialize a container for the reproduced trajectory (projjjjjj)
-    reproduced_trajectory = np.empty((3, (len(ri) - p0_index)), dtype=float)
-    reproduced_trajectory[0][0] = projected_p0[0]
-    reproduced_trajectory[1][0] = projected_p0[1]
-    reproduced_trajectory[2][0] = projected_p0[2]
-
     # Center point vector at the origin
     projected_p0 = np.array([projected_p0[0] - dirx[0][p0_index], projected_p0[1] - dirx[1][p0_index], projected_p0[2] - dirx[2][p0_index]])
+    
+    # Scale initial point (together with the projection, it puts it on the canal surface if it isn't already)
+    projected_p0 = (ratio * ri[p0_index] * projected_p0) / np.linalg.norm(projected_p0)
 
     # Define TNB frame at initial cross section
     p0_frame = np.rot90(np.fliplr(np.array([et[:, p0_index],
                                             en[:, p0_index],
                                             eb[:, p0_index]])))
+
+    # Initialize a container for the reproduced trajectory (projjjjjj)
+    reproduced_trajectory = np.empty((3, (len(ri) - p0_index)), dtype=float)
+    reproduced_trajectory[0][0] = dirx[0][p0_index] + projected_p0[0]
+    reproduced_trajectory[1][0] = dirx[1][p0_index] + projected_p0[1]
+    reproduced_trajectory[2][0] = dirx[2][p0_index] + projected_p0[2]
 
     # Translate the point across the canal surface, once for each point on the directrix
     i = p0_index + 1
