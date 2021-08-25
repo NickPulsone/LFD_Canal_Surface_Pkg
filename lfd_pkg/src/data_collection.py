@@ -25,7 +25,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from canal_surface_algorithm import *
 from lfd_canal_surface_pkg.srv import CanalSrv, CanalSrvRequest
 
-"""TUNABLE PARAMTERS"""
+"""DEFAULT PARAMTERS"""
 
 # Number of points that smooth demonstrations will consist of
 num_points_to_sample = 300
@@ -711,13 +711,6 @@ class MoveGroupPythonInterface(object):
         """ Attempts to execute the reproduced trajectory, prompting the robot to move 
             Returns T/F based on whether the robot was able to successfully reproduce the trajectory"""
 
-        # DEBUG
-        """
-        print("\n\nCurrent position before reproduction: ")
-        print(self.move_group.get_current_pose(self.eef_link).pose)
-        print("\n")
-        """
-
         # Get the orientation of the robot's starting position
         orientation = np.array([self.p0_for_reproduction.orientation.x, 
                                 self.p0_for_reproduction.orientation.y, 
@@ -732,13 +725,6 @@ class MoveGroupPythonInterface(object):
         # Create an array of waypoint pose objects based on 
         # the robot's starting orientation and the reproduced trajectory
         waypoints = xyz_to_pose(curve_to_reproduce, orientation)
-        
-        # DEBUG
-        """
-        print("First 10: ")
-        for wp in waypoints[0:10]:
-            print(wp)
-        """
         
         # Go to the first starting position, display plan to user
         self.move_group.set_goal_position_tolerance(0.001)
@@ -788,7 +774,8 @@ class MoveGroupPythonInterface(object):
             self.move_group.set_goal_position_tolerance(self.move_group.get_goal_position_tolerance() + 0.01)
             step *= 2
             iterations += 1
-
+        
+        # Return false if no plan is found with 3 iterations
         if fraction < 0.99:
             print("Could not find plan.\n")
             return False
@@ -829,10 +816,11 @@ def main():
         # Init the ur5e arm moveit class
         ur5e_arm = MoveGroupPythonInterface(do_reaching)
 
-        # Would you like to load demonstrations from a file (Y/N)? The alternative is recording.  
+        # Prompt the user for which type of data they will input;
         do_file_data = get_y_n("\nWould you like to load demonstrations from a file (Y/N)?: ")
 
         if do_file_data:
+            # Collect initial set of raw demonstrations by recieving file input
             for i in range(number_of_demonstrations):
                 saved_from_file = False
                 while not saved_from_file:
@@ -840,7 +828,7 @@ def main():
                     saved_from_file = ur5e_arm.load_demonstration_from_file()
                 print("Demonstration #" + str(i+1) + "successfully loaded from file.\n")
         else:
-            # Collect initial set of raw demonstrations
+            # Collect initial set of raw demonstrations by recording simulation
             for i in range(number_of_demonstrations):
                 print("\nInitiating the recording for demonstration #" + str(i+1) + "...\n")
                 rospy.sleep(3)
@@ -911,6 +899,8 @@ def main():
                     p0 = ur5e_arm.store_p0_as_current_position()
                 ur5e_arm.get_reproduction(p0, idx)
                 ur5e_arm.execute_reproduction(random=random_p0)
+
+            
 
             # Prompt for more iterations of reproduction
             keep_reproducing = get_y_n("Would you like to do another reproduction (Y/N)?: ")
