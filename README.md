@@ -3,7 +3,7 @@ A ROS package that implements a learning from demonstrations algorithm using can
 
 Maintained by Nick Pulsone, University of Massachusetts Lowell (Nicholas_Pulsone@student.uml.edu)
 Based on "Encoding Demonstrations and Learning New Trajectories using Canal Surfaces"
-by S. Reza Ahmadzadeh and Sonia Chernova (2016), Georgia Tech
+by S. Reza Ahmadzadeh and Sonia Chernova (2016), Georgia Tech.
 
 The package currently operates as a demo for a simulated UR-5e robot. 
 
@@ -47,7 +47,7 @@ To record a demonstration on the simulated robot, use the motion planner in RVIZ
 
 To see the path that was recorded in RVIZ, add a "PoseArray" and set the topic to "/p_arr."
 
-<gif>
+![alt text](https://github.com/NickPulsone/LFD_Canal_Surface_Pkg/blob/main/images/demo_rec.gif?raw=true)
 
 Alternaltively, you can input your own recorded demonstrations from an h5 file. Files must have the structure as follows:
 https://raw.githubusercontent.com/brenhertel/Pearl-ur5e/master/brendan_ur5e/pictures/hdf5%20demo%20recorder%20flowchart.png
@@ -60,7 +60,8 @@ The algorithm will use the smoothed data to generate a canal surface, a gemetric
   
 Canal Surface for a reaching skill:
   
-<img>
+
+![alt text](https://github.com/NickPulsone/LFD_Canal_Surface_Pkg/blob/main/images/reaching_canal_surface.png?raw=true)
   
 The canal surface will reproduce a trajectory for the simulated robot to execute. By default, the robot will reproduce a trajectory from a random starting point on the first cross section of the canal surface. Alternatively, it can reproduce from the robots current position in simulation, by changing the boolean "random" parameter to "False" in data_collection.py.
   
@@ -70,6 +71,7 @@ Depending on the smoothness your data or the complexity of the demonstrations, t
   
 To view the reproduced trajectory in RVIZ add a pose array and set the topic to "/p_arr."
 
-<gif>
+
+![alt text](https://github.com/NickPulsone/LFD_Canal_Surface_Pkg/blob/main/images/traj_exec.gif?raw=true)
 
 
