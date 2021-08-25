@@ -2,6 +2,7 @@
 A ROS package that implements a learning from demonstrations algorithm using canal surfaces.
 
 Maintained by Nick Pulsone, University of Massachusetts Lowell (Nicholas_Pulsone@student.uml.edu)
+
 Based on "Encoding Demonstrations and Learning New Trajectories using Canal Surfaces"
 by S. Reza Ahmadzadeh and Sonia Chernova (2016), Georgia Tech.
 
