@@ -4,9 +4,11 @@ A ROS package that implements a learning from demonstrations algorithm using can
 Maintained by Nick Pulsone, University of Massachusetts Lowell (Nicholas_Pulsone@student.uml.edu)
 
 Based on "Encoding Demonstrations and Learning New Trajectories using Canal Surfaces"
-by S. Reza Ahmadzadeh and Sonia Chernova (2016), Georgia Tech.
+by S. Reza Ahmadzadeh and Sonia Chernova (2016).
 
-The package currently operates as a demo for a simulated UR-5e robot. 
+Contains modified code from https://github.com/ros-industrial/universal_robot and https://github.com/brenhertel/Pearl-ur5e.
+
+All code is contained in ```/lfd_pkg/src```. Functions to generate the canal surface using the algorithm can be found in "canal_surface_algorithm.py." "construct_cs.py" is a service server that, when prompted with a custom message defined in ```/lfd_pkg/srv```, will call the algorithm functions to generate a canal surface. "data_collection.py" creates the user interface for recording demonstrations, creating a canal surface, and reproducing trajectories on the simulated robot.
 
 # Launching the Demo
 1) Make sure you are running ROS Kinetic and have the TRAC-IK solver installed:
